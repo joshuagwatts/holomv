@@ -190,6 +190,7 @@ await page.click('#play-btn');
 await page.waitForFunction(() => document.getElementById('audio').paused, null, { timeout: 10000 });
 const sec2 = tr.sections[1];
 const barDur = (4 * 60) / tr.bpm;
+await setRange('#dial-p1', 0.5); await setRange('#dial-p2', 0.5); // known params, so the transform's AUTO-DIAL re-roll is visible
 await seekToTime(sec2.startSec + 7 * barDur + 0.05);
 await page.waitForTimeout(700); // paused seek settles
 const seedBeforeTick = (await state()).seed;
@@ -213,6 +214,10 @@ check('rendered pixels changed across the transformation', hashAfterTick !== has
 await page.waitForTimeout(2500);
 check('no double transformation for the same tick', (await transformsInLog()) === nTr1,
   'count=' + (await transformsInLog()));
+const stAutoDial = await state();
+check('AUTO-DIAL re-rolled params on the transformation',
+  !!stAutoDial.currentParams && (Math.abs(stAutoDial.currentParams.p1 - 0.5) > 0.02 || Math.abs(stAutoDial.currentParams.p2 - 0.5) > 0.02),
+  JSON.stringify(stAutoDial.currentParams));
 
 console.log('== BUILD 2: CHAOS 0 = seed-only transformations');
 await page.click('#play-btn'); // pause

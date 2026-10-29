@@ -194,6 +194,8 @@
   function applyTransformation(source, sectionIdx) {
     const combo = window.HoloTransforms.makeTransform(Math.random, chaos01());
     applyLook(combo, freshSeed());
+    // AUTO-DIAL: transformations re-roll the showing shader's params too
+    if (S.renderer.current) maybeAutoDial(S.renderer.current.shader.id);
     logEvent({
       source: 'transform',
       text: '⟳ TRANSFORM · seed ' + S.seed + ' · ' + window.HoloTransforms.describe(combo),
