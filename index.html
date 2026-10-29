@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<title>HoloMV — RMS Shader Automator</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/style.css?v=1">
+</head>
+<body>
+<header class="top">
+  <div class="logo">HOLO<span>MV</span></div>
+  <div class="top-right">
+    <span id="status-line">load a track or run the demo</span>
+    <span id="build-stamp">BUILD 1</span>
+  </div>
+</header>
+
+<main>
+  <!-- STAGE -->
+  <section id="stage-wrap">
+    <canvas id="gl" width="720" height="1280"></canvas>
+    <div id="now-shader"><span id="now-shader-name">Nebula Drift</span><span id="now-shader-tag">FREE</span></div>
+    <div id="rec-badge" class="hidden">● REC <span id="rec-time">0:00</span></div>
+    <div id="xfade-badge" class="hidden">XFADE <span id="xfade-name"></span></div>
+  </section>
+
+  <!-- TRANSPORT -->
+  <section class="transport">
+    <button id="play-btn" class="play" disabled>▶</button>
+    <div class="transport-mid">
+      <div class="time-row"><span id="time-cur">0:00.0</span><span class="dim"> / </span><span id="time-dur">0:00.0</span><span id="track-name" class="dim"></span></div>
+      <div id="section-readout" class="section-readout">NO TRACK</div>
+    </div>
+  </section>
+
+  <!-- WAVEFORM + SECTIONS -->
+  <canvas id="wave" width="780" height="168"></canvas>
+  <div class="wave-hint">tap waveform to seek · shaded bands = RMS sections</div>
+  <div class="track-meta">
+    <label>BPM <input id="bpm-input" type="number" step="0.1" min="0" max="300" placeholder="—"></label>
+    <span id="bpm-conf" class="dim"></span>
+    <span id="analysis-line" class="dim"></span>
+  </div>
+  <ul id="section-list"></ul>
+
+  <!-- CONTROLS -->
+  <section class="controls">
+    <button id="load-btn" class="ctl">LOAD TRACK</button>
+    <input id="file-input" type="file" accept="audio/*" hidden>
+    <button id="demo-btn" class="ctl accent">DEMO TRACK</button>
+    <button id="auto-toggle" class="ctl toggle on">AUTOMATOR ON</button>
+    <button id="mode-toggle" class="ctl toggle">MODE: ENERGY</button>
+    <div class="aspect-group" role="group" aria-label="aspect">
+      <button class="aspect-btn on" data-aspect="9:16">9:16</button>
+      <button class="aspect-btn" data-aspect="1:1">1:1</button>
+      <button class="aspect-btn" data-aspect="16:9">16:9</button>
+    </div>
+    <button id="add-shader-btn" class="ctl">+ ADD SHADER</button>
+    <button id="export-btn" class="ctl rec" disabled>● REC EXPORT</button>
+  </section>
+  <div id="export-line" class="export-line"></div>
+
+  <!-- SHADER LIBRARY -->
+  <h2 class="lib-h">SHADERS <span class="dim">tap = fire · &lt;/&gt; = code</span></h2>
+  <div id="shader-grid"></div>
+  <div id="fire-log" class="fire-log"></div>
+</main>
+
+<!-- CODE EDITOR -->
+<div id="editor" class="editor hidden">
+  <div class="editor-head">
+    <select id="editor-select"></select>
+    <button id="editor-close" class="ctl small">✕</button>
+  </div>
+  <label class="ed-label">NAME <input id="editor-name" type="text"></label>
+  <label class="ed-label">ENERGY <input id="editor-energy" type="range" min="0" max="1" step="0.01"> <span id="editor-energy-val"></span></label>
+  <textarea id="editor-code" spellcheck="false"></textarea>
+  <div id="editor-error" class="editor-error"></div>
+  <div class="editor-btns">
+    <button id="editor-apply" class="ctl accent">APPLY</button>
+    <button id="editor-reset" class="ctl">RESET</button>
+    <button id="editor-delete" class="ctl danger">DELETE</button>
+  </div>
+</div>
+
+<audio id="audio" preload="auto" crossorigin="anonymous"></audio>
+
+<script src="js/tempo.js?v=1"></script>
+<script src="js/rms.js?v=1"></script>
+<script src="js/shaders.js?v=1"></script>
+<script src="js/automator.js?v=1"></script>
+<script src="js/renderer.js?v=1"></script>
+<script src="js/demo.js?v=1"></script>
+<script src="js/exporter.js?v=1"></script>
+<script src="js/app.js?v=1"></script>
+</body>
+</html>
