@@ -4,17 +4,22 @@
  *    middle clearly above the quiet ends and true bar lengths.
  * 2) Automator replay over the section map: exactly one fire per boundary
  *    on continuous playback; ramp 0 outside the last-4-bars window and
- *    rising inside it; ZERO fires on seek, on pause-scrub, on subscribe. */
+ *    rising inside it; ZERO fires on seek, on pause-scrub, on subscribe.
+ * 3) BUILD 2: ENERGY picks are weighted-random among the 3 closest energy
+ *    tags (never the current shader); transformation ticks fire exactly
+ *    once per N bars inside a section, never on seek/pause, boundary wins
+ *    over a coincident tick; transform combos are CHAOS-gated (0 = seed
+ *    only, invert only above 0.7). */
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 globalThis.window = globalThis;
-for (const f of ['js/tempo.js', 'js/rms.js', 'js/automator.js']) {
+for (const f of ['js/tempo.js', 'js/rms.js', 'js/automator.js', 'js/transforms.js']) {
   eval(readFileSync(join(ROOT, f), 'utf8'));
 }
-const { TempoDetect, RmsAnalyze, Automator } = globalThis;
+const { TempoDetect, RmsAnalyze, Automator, HoloTransforms } = globalThis;
 
 let fails = 0;
 const check = (name, cond, extra) => {
@@ -71,8 +76,10 @@ if (rms.sections.length >= 3) {
 
 /* ---- automator replay ---- */
 const LIB = [
-  { id: 'nebula', energy: 0.15 }, { id: 'flowfield', energy: 0.32 },
-  { id: 'plasma', energy: 0.5 }, { id: 'tunnel', energy: 0.66 },
+  { id: 'nebula', energy: 0.15 }, { id: 'orbital', energy: 0.25 },
+  { id: 'flowfield', energy: 0.32 }, { id: 'fractal', energy: 0.40 },
+  { id: 'plasma', energy: 0.5 }, { id: 'chrome', energy: 0.58 },
+  { id: 'tunnel', energy: 0.66 }, { id: 'gridrunner', energy: 0.75 },
   { id: 'kaleido', energy: 0.85 }, { id: 'starforge', energy: 0.96 },
 ];
 const sections = rms.sections.length >= 3 ? rms.sections
@@ -82,8 +89,12 @@ const sections = rms.sections.length >= 3 ? rms.sections
 const useBpm = rms.sections.length >= 3 ? tempo.bpm : 128;
 const useOffset = rms.sections.length >= 3 ? tempo.beatOffsetSec : 0;
 
-function makeAuto(fires, mode) {
-  const a = new Automator({ enabled: true, mode: mode || 'energy', onFire: (id, idx) => fires.push({ id, idx }) });
+function makeAuto(fires, mode, extra) {
+  const a = new Automator({
+    enabled: true, mode: mode || 'energy',
+    onFire: (id, idx) => fires.push({ id, idx }),
+    ...(extra || {}),
+  });
   a.setTrack(sections, useBpm, useOffset);
   a.setLibrary(LIB);
   a.setCurrent('nebula', false);
@@ -107,8 +118,8 @@ function makeAuto(fires, mode) {
     `fires=${fires.length} boundaries=${sections.length - 1} ` + JSON.stringify(fires));
   check('fire targets are sections 1..n-1', fires.every((f, i) => f.idx === i + 1), JSON.stringify(fires.map((f) => f.idx)));
   check('no double-fire of same target', new Set(fires.map((f) => f.idx)).size === fires.length);
-  check('energy mode: boundary into loud picks intense shader',
-    fires.length && ['kaleido', 'starforge', 'tunnel'].includes(fires[0].id), fires.length ? fires[0].id : 'none');
+  check('energy mode: boundary into loud picks a top-3 energy match',
+    fires.length && ['starforge', 'kaleido', 'gridrunner'].includes(fires[0].id), fires.length ? fires[0].id : 'none');
   check('ramp 0 before window', rampBeforeWindow === 0, 'got ' + rampBeforeWindow);
   check('ramp rising inside window', rampInWindow !== null && rampInWindow > 0.05 && rampInWindow < 1, 'got ' + rampInWindow);
 }
@@ -133,13 +144,13 @@ function makeAuto(fires, mode) {
   check('paused scrub/subscribe: no fire', fires.length === 0, 'fires=' + fires.length);
 }
 
-// next mode: library order
+// next mode: library order (BUILD 2 library: nebula -> orbital -> flowfield)
 {
   const fires = [];
   const a = makeAuto(fires, 'next');
   for (let t = 0; t < dur - 0.2; t += 1 / 30) a.update(t, true, t * 1000);
   check('NEXT mode fires in library order',
-    fires.length === sections.length - 1 && fires[0].id === 'flowfield' && (fires.length < 2 || fires[1].id === 'plasma'),
+    fires.length === sections.length - 1 && fires[0].id === 'orbital' && (fires.length < 2 || fires[1].id === 'flowfield'),
     JSON.stringify(fires.map((f) => f.id)));
 }
 
@@ -150,6 +161,121 @@ function makeAuto(fires, mode) {
   a.enabled = false;
   for (let t = 0; t < dur - 0.2; t += 1 / 30) a.update(t, true, t * 1000);
   check('disabled automator: no fires', fires.length === 0, 'fires=' + fires.length);
+}
+
+/* ---- BUILD 2: ENERGY weighted-random pick ---- */
+{
+  const mk = (rand) => {
+    const a = new Automator({ enabled: true, mode: 'energy', random: rand, onFire: () => {} });
+    a.setTrack([{ startBar: 0, lengthBars: 16, energy: 0.5, startSec: 0 }], 128, 0);
+    a.setLibrary(LIB);
+    a.setCurrent('starforge', false);
+    return a;
+  };
+  // target energy 0.5, current starforge: closest 3 = plasma(0) chrome(.08) fractal(.10)
+  check('energy pick rng=0 -> closest (plasma)', mk(() => 0).pickFor(0) === 'plasma');
+  check('energy pick rng=0.5 -> 2nd closest (chrome)', mk(() => 0.5).pickFor(0) === 'chrome');
+  check('energy pick rng=0.99 -> 3rd closest (fractal)', mk(() => 0.99).pickFor(0) === 'fractal');
+  const a2 = mk(() => 0); a2.setCurrent('plasma', false);
+  check('energy pick never returns the current shader', a2.pickFor(0) !== 'plasma', a2.pickFor(0));
+  let varied = new Set();
+  const a3 = mk(Math.random);
+  for (let i = 0; i < 60; i++) varied.add(a3.pickFor(0));
+  check('energy pick varies across the top-3 pool', varied.size >= 2 && [...varied].every((id) => ['plasma', 'chrome', 'fractal'].includes(id)),
+    [...varied].join(','));
+}
+
+/* ---- BUILD 2: transformation ticks ---- */
+const FIXED = [
+  { startBar: 0, lengthBars: 16, energy: 0.15, startSec: 0 },
+  { startBar: 16, lengthBars: 32, energy: 0.95, startSec: 30 },
+  { startBar: 48, lengthBars: 16, energy: 0.15, startSec: 90 },
+];
+function makeFixed(transforms, extra) {
+  const a = new Automator({
+    enabled: true, mode: 'energy', transformEvery: 8,
+    onFire: () => {}, onTransform: (e) => transforms.push(e), ...(extra || {}),
+  });
+  a.setTrack(FIXED, 128, 0);
+  a.setLibrary(LIB);
+  a.setCurrent('nebula', false);
+  return a;
+}
+{
+  const tr = [];
+  const a = makeFixed(tr);
+  for (let t = 0; t < 119.5; t += 1 / 30) a.update(t, true, t * 1000);
+  // sec0 (16 bars): tick at bar 8 -> 1; sec1 (32): bars 8/16/24 -> 3; sec2 (16): bar 8 -> 1
+  check('transform ticks: 5 across 16/32/16 at every-8', tr.length === 5,
+    'got ' + tr.length + ' ' + JSON.stringify(tr));
+  check('transform ticks land in the right sections',
+    JSON.stringify(tr.map((e) => e.sectionIndex)) === '[0,1,1,1,2]', JSON.stringify(tr.map((e) => e.sectionIndex)));
+}
+{
+  // seek skips ticks silently; the next tick after the seek still fires once
+  const tr = [];
+  const a = makeFixed(tr);
+  for (let t = 0; t < 10; t += 1 / 30) a.update(t, true, t * 1000);
+  a.update(50, true, 10_033); // seek into section 2 (barIn ~10.7 -> k=1 baselined)
+  for (let t = 50; t < 66; t += 1 / 30) a.update(t, true, (10 + (t - 50)) * 1000);
+  check('seek: tick under the playhead consumed, later tick fires once', tr.length === 1,
+    'got ' + tr.length + ' ' + JSON.stringify(tr));
+}
+{
+  // paused: no transforms even while position scrubs across tick points
+  const tr = [];
+  const a = makeFixed(tr);
+  a.update(0, false, 0);
+  a.update(20, false, 400); a.update(45, false, 800); a.update(100, false, 1200);
+  check('paused scrub: no transforms', tr.length === 0, 'got ' + tr.length);
+}
+{
+  // boundary wins: sections 16/16 with every-4 — the update that crosses
+  // the boundary emits a fire, not a transform, and no transform is
+  // double-counted around it
+  const tr = [], fr = [];
+  const a = new Automator({
+    enabled: true, mode: 'next', transformEvery: 4,
+    onFire: (id, idx) => fr.push(idx), onTransform: (e) => tr.push(e),
+  });
+  a.setTrack([
+    { startBar: 0, lengthBars: 16, energy: 0.2, startSec: 0 },
+    { startBar: 16, lengthBars: 16, energy: 0.9, startSec: 30 },
+  ], 128, 0);
+  a.setLibrary(LIB); a.setCurrent('nebula', false);
+  for (let t = 0; t < 59.5; t += 1 / 30) a.update(t, true, t * 1000);
+  check('boundary fired exactly once', fr.length === 1 && fr[0] === 1, JSON.stringify(fr));
+  check('transforms at bars 4/8/12 of each 16-bar section (6, none at the boundary)',
+    tr.length === 6, 'got ' + tr.length + ' ' + JSON.stringify(tr));
+}
+{
+  const tr = [];
+  const a = makeFixed(tr, { transformEvery: 0 });
+  for (let t = 0; t < 119.5; t += 1 / 30) a.update(t, true, t * 1000);
+  check('transformEvery OFF: no transforms', tr.length === 0, 'got ' + tr.length);
+}
+
+/* ---- BUILD 2: transform combo CHAOS gating ---- */
+{
+  const T = HoloTransforms;
+  check('chaos 0 -> neutral combo (seed only) for any rng',
+    [0, 0.42, 0.999].every((v) => T.isNeutral(T.makeTransform(() => v, 0))));
+  check('describe(neutral) = "seed only"', T.describe(T.neutral()) === 'seed only');
+  // invert gate: rng that would pass the invert roll (last call 0.1)
+  const seq = (arr) => { let i = 0; return () => arr[Math.min(i++, arr.length - 1)]; };
+  check('invert blocked at chaos 0.5', T.makeTransform(seq([0.99, 0.99, 0.99, 0.5, 0.5, 0.5, 0.5, 0.1]), 0.5).invert === false);
+  check('invert allowed at chaos 0.9', T.makeTransform(seq([0.99, 0.99, 0.99, 0.5, 0.5, 0.5, 0.5, 0.1]), 0.9).invert === true);
+  let rangesOk = true, anyWild = false;
+  for (let i = 0; i < 300; i++) {
+    const t = T.makeTransform(Math.random, 1);
+    if (t.zoom < 0.8 || t.zoom > 1.45 || Math.abs(t.rotDeg) > 30 || Math.abs(t.hueDeg) > 180
+      || t.speed < 0.5 || t.speed > 2 || ![0, 3, 4, 6].includes(t.kaleido)) rangesOk = false;
+    if (!T.isNeutral(t)) anyWild = true;
+  }
+  check('chaos 1 combos stay inside pool ranges', rangesOk);
+  check('chaos 1 produces non-neutral combos', anyWild);
+  const d = T.describe({ mirrorX: true, mirrorY: false, kaleido: 4, hueDeg: 80, zoom: 1.2, rotDeg: 0, speed: 1, invert: false });
+  check('describe lists combo parts', /kaleido 4/.test(d) && /hue \+80°/.test(d) && /mirror X/.test(d), d);
 }
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nALL UNIT CHECKS PASSED');

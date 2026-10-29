@@ -76,6 +76,22 @@ button { font: inherit; color: inherit; }
 .aspect-btn { flex: 1; background: #222; border: 1px solid #3a3a3a; color: #9a9a9a;
   border-radius: 8px; padding: 12px 0; font-size: 13px; font-weight: 600; }
 .aspect-btn.on { color: #eee; border-color: #777; background: #333; }
+.seg-group { display: flex; gap: 6px; align-items: stretch; grid-column: span 2; }
+.seg-label { display: flex; align-items: center; font-size: 10px; letter-spacing: 1px;
+  color: #8a8a8a; padding-right: 2px; }
+.seg-btn { flex: 1; background: #222; border: 1px solid #3a3a3a; color: #9a9a9a;
+  border-radius: 8px; padding: 12px 0; font-size: 13px; font-weight: 600; }
+.seg-btn.on { color: #eee; border-color: #777; background: #333; }
+
+/* dials */
+.dials { background: #1c1c1c; border: 1px solid #2c2c2c; border-radius: 8px;
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 9px; }
+.dial { display: flex; align-items: center; gap: 10px; font-size: 11px; }
+.dial-name { flex: 0 0 86px; letter-spacing: 1px; color: #bdbdbd; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dial input[type="range"] { flex: 1; min-width: 0; accent-color: #9a9a9a; height: 26px; }
+.dial-val { flex: 0 0 52px; text-align: right; font-variant-numeric: tabular-nums; color: #e8e8e8; }
+.dial.param .dial-name { color: #fff; }
 .export-line { font-size: 12px; color: #bdbdbd; margin-top: 8px; min-height: 16px; }
 .export-line a { color: #fff; }
 

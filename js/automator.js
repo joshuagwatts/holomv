@@ -11,9 +11,19 @@
  *     silently;
  *   - no double-fires: a boundary fires once, then the fired-section marker
  *     blocks any repeat until the section actually changes again.
- * Pure logic: no DOM, no audio. Feed it update(posSec, playing) per tick.
- * Fire modes: 'energy' (unused shader whose energy tag best matches the new
- * section) and 'next' (next in library order). */
+ *
+ * BUILD 2 — sub-section TRANSFORMATIONS: inside a section, every
+ * transformEvery bars (4/8/16, 0 = OFF) a transformation tick fires
+ * (onTransform) — same discipline: exactly once per tick, only on
+ * continuous playback, re-baselined silently on seek/pause/track change.
+ * If a boundary and a tick land on the same update, the boundary wins and
+ * the tick is consumed silently (one event, logged once).
+ *
+ * Fire modes: 'energy' (weighted random among the 3 shaders whose energy
+ * tags are closest to the new section's energy, never the current shader —
+ * BUILD 2: v1's deterministic single-closest pick was too predictable) and
+ * 'next' (next in library order). Fresh seeds are the app's job.
+ * Pure logic: no DOM, no audio. Feed it update(posSec, playing) per tick. */
 (function (global) {
   const RAMP_BARS = 4;
 
@@ -23,8 +33,11 @@
       this.enabled = opts.enabled !== false;
       this.mode = opts.mode || 'energy'; // 'energy' | 'next'
       this.rampBars = opts.rampBars || RAMP_BARS;
+      this.transformEvery = opts.transformEvery != null ? opts.transformEvery : 8; // bars, 0 = off
+      this.random = typeof opts.random === 'function' ? opts.random : Math.random;
       this.onFire = opts.onFire || (() => {});
       this.onCue = opts.onCue || (() => {}); // (shader, targetSectionIdx)
+      this.onTransform = opts.onTransform || (() => {}); // ({sectionIndex, tick})
       this.sections = [];
       this.bpm = 0;
       this.beatOffsetSec = 0;
@@ -44,6 +57,7 @@
       this.rampProgress = 0;
       this.barsToNext = Infinity;
       this.barInSection = 0;
+      this.transformTick = -1;    // last transformation tick k baselined/fired in this section
     }
 
     setTrack(sections, bpm, beatOffsetSec) {
@@ -51,6 +65,11 @@
       this.bpm = bpm || 0;
       this.beatOffsetSec = beatOffsetSec || 0;
       this._resetTransport();
+    }
+
+    setTransformEvery(n) {
+      this.transformEvery = Math.max(0, Math.floor(+n || 0));
+      this.transformTick = -1; // next update re-baselines silently
     }
 
     setLibrary(list) { this.library = list || []; }
@@ -96,22 +115,19 @@
         const cur = this.library.findIndex((s) => s.id === this.currentId);
         return this.library[(cur + 1 + this.library.length) % this.library.length].id;
       }
-      // energy: unused shader whose tag best matches the section energy;
-      // when everything has been used, reset the used pool (keeping current).
+      // energy: weighted random among the 3 closest energy tags, never the
+      // shader currently on stage.
       const target = this.sections[sectionIdx] ? this.sections[sectionIdx].energy : 0.5;
-      let pool = this.library.filter((s) => s.id !== this.currentId && !this.usedIds.has(s.id));
-      if (!pool.length) {
-        this.resetUsed(this.currentId);
-        pool = this.library.filter((s) => s.id !== this.currentId);
-      }
+      const pool = this.library.filter((s) => s.id !== this.currentId);
       if (!pool.length) return this.currentId;
       pool.sort((a, b) => Math.abs(a.energy - target) - Math.abs(b.energy - target));
-      return pool[0].id;
+      const top = pool.slice(0, Math.min(3, pool.length));
+      return top[Math.min(top.length - 1, Math.floor(this.random() * top.length))].id;
     }
 
-    /* Main tick. Returns {fired, rampProgress, cuedId, loc}. */
+    /* Main tick. Returns {fired, transformFired, rampProgress, cuedId, loc}. */
     update(posSec, playing, nowMs) {
-      const out = { fired: false, rampProgress: 0, cuedId: this.cuedId, loc: null };
+      const out = { fired: false, transformFired: false, rampProgress: 0, cuedId: this.cuedId, loc: null };
       const loc = this.locate(posSec);
       out.loc = loc;
       if (!loc) { this.lastPos = posSec; return out; }
@@ -132,20 +148,31 @@
       // First observation / load / subscribe: baseline only, never fire.
       if (this.sectionIndex === -1) {
         this.sectionIndex = loc.index;
+        this.transformTick = this.transformEvery > 0
+          ? Math.floor(loc.barInSection / this.transformEvery) : 0;
         this.rampProgress = 0;
         out.rampProgress = 0;
         return out;
       }
 
-      // Section changed.
+      // Section changed — the boundary wins over any transformation tick
+      // landing on the same update: the tick baseline resets with the new
+      // section and no transform event is emitted for it.
       if (loc.index !== this.sectionIndex) {
         const canFire = this.enabled && playing && continuous && this.firedForSection !== loc.index;
+        const prevCuedId = this.cuedId, prevCuedFor = this.cuedForSection;
         this.sectionIndex = loc.index;
+        this.transformTick = this.transformEvery > 0
+          ? Math.floor(loc.barInSection / this.transformEvery) : 0;
         this.cuedForSection = -1;
         this.cuedId = null;
         this.rampProgress = 0;
         if (canFire) {
-          const id = this.pickFor(loc.index) || this.currentId;
+          // fire the shader that was cued through the ramp when there is
+          // one (ENERGY picks are random now — re-picking here could fire a
+          // different shader than the one that crossfaded in)
+          const id = (prevCuedFor === loc.index && prevCuedId)
+            ? prevCuedId : (this.pickFor(loc.index) || this.currentId);
           this.firedForSection = loc.index;
           if (id && id !== this.currentId) {
             this.setCurrent(id, false);
@@ -158,6 +185,21 @@
         out.rampProgress = 0;
         out.cuedId = null;
         return out;
+      }
+
+      // Same section: transformation ticks every transformEvery bars.
+      if (this.transformEvery > 0) {
+        const k = Math.floor(loc.barInSection / this.transformEvery);
+        if (this.transformTick === -1) {
+          this.transformTick = k; // re-baseline silently (setting changed)
+        } else if (k > this.transformTick) {
+          const canTransform = this.enabled && playing && continuous;
+          this.transformTick = k; // consumed either way — no catch-up bursts
+          if (canTransform && k >= 1) {
+            out.transformFired = true;
+            this.onTransform({ sectionIndex: loc.index, tick: k });
+          }
+        }
       }
 
       // Same section: ramp in the last rampBars bars.

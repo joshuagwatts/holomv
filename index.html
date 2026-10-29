@@ -7,14 +7,14 @@
 <meta http-equiv="Pragma" content="no-cache">
 <title>HoloMV — RMS Shader Automator</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="css/style.css?v=1">
+<link rel="stylesheet" href="css/style.css?v=2">
 </head>
 <body>
 <header class="top">
   <div class="logo">HOLO<span>MV</span></div>
   <div class="top-right">
     <span id="status-line">load a track or run the demo</span>
-    <span id="build-stamp">BUILD 1</span>
+    <span id="build-stamp">BUILD 2</span>
   </div>
 </header>
 
@@ -51,8 +51,17 @@
     <button id="load-btn" class="ctl">LOAD TRACK</button>
     <input id="file-input" type="file" accept="audio/*" hidden>
     <button id="demo-btn" class="ctl accent">DEMO TRACK</button>
+    <button id="dice-btn" class="ctl accent">🎲 RANDOMIZE</button>
     <button id="auto-toggle" class="ctl toggle on">AUTOMATOR ON</button>
     <button id="mode-toggle" class="ctl toggle">MODE: ENERGY</button>
+    <button id="autodial-toggle" class="ctl toggle on">AUTO-DIAL ON</button>
+    <div class="seg-group" role="group" aria-label="transform every">
+      <span class="seg-label">TRANSFORM</span>
+      <button class="seg-btn" data-transform-every="4">4</button>
+      <button class="seg-btn on" data-transform-every="8">8</button>
+      <button class="seg-btn" data-transform-every="16">16</button>
+      <button class="seg-btn" data-transform-every="0">OFF</button>
+    </div>
     <div class="aspect-group" role="group" aria-label="aspect">
       <button class="aspect-btn on" data-aspect="9:16">9:16</button>
       <button class="aspect-btn" data-aspect="1:1">1:1</button>
@@ -62,6 +71,32 @@
     <button id="export-btn" class="ctl rec" disabled>● REC EXPORT</button>
   </section>
   <div id="export-line" class="export-line"></div>
+
+  <!-- DIALS -->
+  <h2 class="lib-h">DIALS <span class="dim">live — drag to reshape the look</span></h2>
+  <section id="dials" class="dials">
+    <label class="dial"><span class="dial-name">SPEED</span>
+      <input id="dial-speed" type="range" min="0.1" max="3" step="0.01" value="1">
+      <span class="dial-val" id="dial-speed-val">1.00×</span></label>
+    <label class="dial"><span class="dial-name">HUE</span>
+      <input id="dial-hue" type="range" min="-180" max="180" step="1" value="0">
+      <span class="dial-val" id="dial-hue-val">0°</span></label>
+    <label class="dial"><span class="dial-name">ZOOM</span>
+      <input id="dial-zoom" type="range" min="0.5" max="2" step="0.01" value="1">
+      <span class="dial-val" id="dial-zoom-val">1.00×</span></label>
+    <label class="dial"><span class="dial-name">REACT</span>
+      <input id="dial-react" type="range" min="0" max="2" step="0.01" value="1">
+      <span class="dial-val" id="dial-react-val">1.00</span></label>
+    <label class="dial"><span class="dial-name">CHAOS</span>
+      <input id="dial-chaos" type="range" min="0" max="100" step="1" value="50">
+      <span class="dial-val" id="dial-chaos-val">50%</span></label>
+    <label class="dial param"><span class="dial-name" id="param1-name">PARAM 1</span>
+      <input id="dial-p1" type="range" min="0" max="1" step="0.01" value="0.5">
+      <span class="dial-val" id="dial-p1-val">0.50</span></label>
+    <label class="dial param"><span class="dial-name" id="param2-name">PARAM 2</span>
+      <input id="dial-p2" type="range" min="0" max="1" step="0.01" value="0.5">
+      <span class="dial-val" id="dial-p2-val">0.50</span></label>
+  </section>
 
   <!-- SHADER LIBRARY -->
   <h2 class="lib-h">SHADERS <span class="dim">tap = fire · &lt;/&gt; = code</span></h2>
@@ -88,13 +123,14 @@
 
 <audio id="audio" preload="auto" crossorigin="anonymous"></audio>
 
-<script src="js/tempo.js?v=1"></script>
-<script src="js/rms.js?v=1"></script>
-<script src="js/shaders.js?v=1"></script>
-<script src="js/automator.js?v=1"></script>
-<script src="js/renderer.js?v=1"></script>
-<script src="js/demo.js?v=1"></script>
-<script src="js/exporter.js?v=1"></script>
-<script src="js/app.js?v=1"></script>
+<script src="js/tempo.js?v=2"></script>
+<script src="js/rms.js?v=2"></script>
+<script src="js/shaders.js?v=2"></script>
+<script src="js/transforms.js?v=2"></script>
+<script src="js/automator.js?v=2"></script>
+<script src="js/renderer.js?v=2"></script>
+<script src="js/demo.js?v=2"></script>
+<script src="js/exporter.js?v=2"></script>
+<script src="js/app.js?v=2"></script>
 </body>
 </html>
