@@ -21,8 +21,14 @@
  *
  * Fire modes: 'energy' (weighted random among the 3 shaders whose energy
  * tags are closest to the new section's energy, never the current shader —
- * BUILD 2: v1's deterministic single-closest pick was too predictable) and
- * 'next' (next in library order). Fresh seeds are the app's job.
+ * BUILD 2: v1's deterministic single-closest pick was too predictable),
+ * 'next' (next in library order), and BUILD 3 'journey': the track's
+ * sections are mapped across a stage arc — Reality -> Fractality ->
+ * Abstraction -> Visualization -> back to Reality (first section starts
+ * in REALITY, middle sections distribute across the middle stages in
+ * order, the FINAL section always lands back in REALITY) — and the look
+ * is chosen by the energy-weighted rule among the target stage's looks.
+ * Fresh seeds are the app's job.
  * Pure logic: no DOM, no audio. Feed it update(posSec, playing) per tick. */
 (function (global) {
   const RAMP_BARS = 4;
@@ -41,7 +47,8 @@
       this.sections = [];
       this.bpm = 0;
       this.beatOffsetSec = 0;
-      this.library = [];       // [{id, energy}] in library order
+      this.journeyStages = []; // BUILD 3: stage per section ('journey' mode)
+      this.library = [];       // [{id, energy, stage}] in library order
       this.currentId = null;   // shader currently on stage
       this.usedIds = new Set(); // shaders fired since last reset (manual fires count)
       this._resetTransport();
@@ -64,6 +71,7 @@
       this.sections = sections || [];
       this.bpm = bpm || 0;
       this.beatOffsetSec = beatOffsetSec || 0;
+      this.journeyStages = Automator.journeyFor(this.sections.length);
       this._resetTransport();
     }
 
@@ -109,20 +117,33 @@
       return null;
     }
 
+    /* Weighted-random pick among the 3 pool entries whose energy tags are
+     * closest to target, never the shader currently on stage. */
+    _pickWeighted(pool, target) {
+      const cand = (pool || []).filter((s) => s.id !== this.currentId);
+      if (!cand.length) return this.currentId;
+      cand.sort((a, b) => Math.abs(a.energy - target) - Math.abs(b.energy - target));
+      const top = cand.slice(0, Math.min(3, cand.length));
+      return top[Math.min(top.length - 1, Math.floor(this.random() * top.length))].id;
+    }
+
     pickFor(sectionIdx) {
       if (!this.library.length) return null;
       if (this.mode === 'next') {
         const cur = this.library.findIndex((s) => s.id === this.currentId);
         return this.library[(cur + 1 + this.library.length) % this.library.length].id;
       }
-      // energy: weighted random among the 3 closest energy tags, never the
-      // shader currently on stage.
       const target = this.sections[sectionIdx] ? this.sections[sectionIdx].energy : 0.5;
-      const pool = this.library.filter((s) => s.id !== this.currentId);
-      if (!pool.length) return this.currentId;
-      pool.sort((a, b) => Math.abs(a.energy - target) - Math.abs(b.energy - target));
-      const top = pool.slice(0, Math.min(3, pool.length));
-      return top[Math.min(top.length - 1, Math.floor(this.random() * top.length))].id;
+      if (this.mode === 'journey') {
+        // stage first: looks from the section's journey stage only; the
+        // energy-weighted rule picks within the stage. Falls back to the
+        // whole library when a stage has no (other) looks.
+        const stage = this.journeyStages[sectionIdx] || 'REALITY';
+        const inStage = this.library.filter((s) => (s.stage || 'ABSTRACTION') === stage);
+        return this._pickWeighted(inStage.length ? inStage : this.library, target);
+      }
+      // energy: weighted random among the 3 closest energy tags overall.
+      return this._pickWeighted(this.library, target);
     }
 
     /* Main tick. Returns {fired, transformFired, rampProgress, cuedId, loc}. */
@@ -135,12 +156,17 @@
       this.barInSection = loc.barInSection;
       this.barsToNext = loc.barsToNext;
 
-      // Continuity: expected advance from wall clock while playing.
+      // Continuity: expected advance from wall clock while playing. A
+      // seek/teleport breaks the agreement between audio advance and
+      // wall advance; a merely SLOW frame (throttled phone, heavy look)
+      // does not — so there is no wallDt cap: agreement is the evidence,
+      // with a tolerance that grows with the gap.
       let continuous = false;
       if (this.lastPos !== null && this.lastTickMs !== null && nowMs != null) {
         const wallDt = (nowMs - this.lastTickMs) / 1000;
         const posDt = posSec - this.lastPos;
-        continuous = playing && wallDt > 0 && wallDt < 2 && Math.abs(posDt - wallDt) < 0.35 && posDt >= -0.05;
+        continuous = playing && wallDt > 0
+          && Math.abs(posDt - wallDt) < 0.35 + wallDt * 0.15 && posDt >= -0.05;
       }
       this.lastPos = posSec;
       this.lastTickMs = nowMs != null ? nowMs : this.lastTickMs;
@@ -190,8 +216,12 @@
       // Same section: transformation ticks every transformEvery bars.
       if (this.transformEvery > 0) {
         const k = Math.floor(loc.barInSection / this.transformEvery);
-        if (this.transformTick === -1) {
-          this.transformTick = k; // re-baseline silently (setting changed)
+        if (this.transformTick === -1 || k < this.transformTick) {
+          // re-baseline silently: setting changed, or the playhead
+          // seeked back behind the tick schedule — re-arm the ticks
+          // from here instead of starving transformations until the
+          // old schedule catches up
+          this.transformTick = k;
         } else if (k > this.transformTick) {
           const canTransform = this.enabled && playing && continuous;
           this.transformTick = k; // consumed either way — no catch-up bursts
@@ -226,6 +256,22 @@
   }
 
   Automator.RAMP_BARS = RAMP_BARS;
+  /* The JOURNEY arc: stage for each of n sections. First = REALITY,
+   * last = REALITY (the journey comes home), middles distribute across
+   * FRACTALITY / ABSTRACTION / VISUALIZATION in order, proportionally. */
+  Automator.STAGES = ['REALITY', 'FRACTALITY', 'ABSTRACTION', 'VISUALIZATION'];
+  Automator.journeyFor = (n) => {
+    if (!n || n < 1) return [];
+    if (n === 1) return ['REALITY'];
+    const MID = ['FRACTALITY', 'ABSTRACTION', 'VISUALIZATION'];
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      if (i === 0 || i === n - 1) { out.push('REALITY'); continue; }
+      const t = i / (n - 1); // 0..1 across the track
+      out.push(MID[Math.min(MID.length - 1, Math.floor(t * MID.length))]);
+    }
+    return out;
+  };
   global.Automator = Automator;
   if (typeof module !== 'undefined' && module.exports) module.exports = { Automator };
 })(typeof window !== 'undefined' ? window : globalThis);

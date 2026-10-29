@@ -43,6 +43,9 @@ button { font: inherit; color: inherit; }
 .time-row { font-variant-numeric: tabular-nums; font-size: 15px; }
 #track-name { font-size: 12px; margin-left: 6px; }
 .section-readout { font-size: 11px; letter-spacing: 1px; color: #bdbdbd; margin-top: 3px; }
+.journey-line { font-size: 10px; letter-spacing: 1px; color: #8a8a8a; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overlay-sel { text-align: left; appearance: none; -webkit-appearance: none; }
 
 /* waveform */
 #wave { width: 100%; height: 84px; display: block; margin-top: 10px;

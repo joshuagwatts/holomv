@@ -9,17 +9,23 @@
  *    tags (never the current shader); transformation ticks fire exactly
  *    once per N bars inside a section, never on seek/pause, boundary wins
  *    over a coincident tick; transform combos are CHAOS-gated (0 = seed
- *    only, invert only above 0.7). */
+ *    only, invert only above 0.7).
+ * 4) BUILD 3: bands.js — a sub-heavy loud section and an equally loud
+ *    no-sub section (same RMS): per-bar sub separates them and the
+ *    sub-weighted energy formula (0.55 RMS + 0.45 sub) ranks the
+ *    sub-heavy one higher; BandTracker kick fires on beat-grid sub flux
+ *    and decays. JOURNEY: journeyFor arcs Reality -> ... -> Reality and
+ *    journey picks always come from the target section's stage. */
 import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 globalThis.window = globalThis;
-for (const f of ['js/tempo.js', 'js/rms.js', 'js/automator.js', 'js/transforms.js']) {
+for (const f of ['js/tempo.js', 'js/rms.js', 'js/bands.js', 'js/automator.js', 'js/transforms.js', 'js/shaders.js']) {
   eval(readFileSync(join(ROOT, f), 'utf8'));
 }
-const { TempoDetect, RmsAnalyze, Automator, HoloTransforms } = globalThis;
+const { TempoDetect, RmsAnalyze, Automator, HoloTransforms, HoloBands, HoloShaders } = globalThis;
 
 let fails = 0;
 const check = (name, cond, extra) => {
@@ -276,6 +282,127 @@ function makeFixed(transforms, extra) {
   check('chaos 1 produces non-neutral combos', anyWild);
   const d = T.describe({ mirrorX: true, mirrorY: false, kaleido: 4, hueDeg: 80, zoom: 1.2, rotDeg: 0, speed: 1, invert: false });
   check('describe lists combo parts', /kaleido 4/.test(d) && /hue \+80°/.test(d) && /mirror X/.test(d), d);
+}
+
+/* ---- BUILD 3: bands — sub-heavy vs no-sub at the SAME RMS ---- */
+{
+  // 32 bars @128: 16 quiet (220 Hz, 0.2) + 16 loud. Buffer A loud =
+  // 50 Hz (0.75) + 220 Hz (0.45); buffer B loud = 900 Hz at the matched
+  // total amplitude sqrt(0.75^2 + 0.45^2) -> identical section RMS.
+  const mkBuf = (loudFn) => {
+    const d = new Float32Array(len);
+    for (let i = 0; i < len; i++) {
+      const t = i / SR, bar = Math.floor(t / barDur);
+      d[i] = bar < 16 ? Math.sin(2 * Math.PI * 220 * t) * 0.2 : loudFn(t);
+    }
+    return { length: len, sampleRate: SR, numberOfChannels: 1, duration: dur, getChannelData: () => d };
+  };
+  const bufA = mkBuf((t) => Math.sin(2 * Math.PI * 50 * t) * 0.75 + Math.sin(2 * Math.PI * 220 * t) * 0.45);
+  const bufB = mkBuf((t) => Math.sin(2 * Math.PI * 900 * t) * Math.sqrt(0.75 * 0.75 + 0.45 * 0.45));
+  const enrich = (buf) => {
+    const r = RmsAnalyze.analyzeSections(buf, 128, 0);
+    const bars = HoloBands.analyzeBars(buf, 128, 0);
+    return { sections: HoloBands.enrichSections(r.sections, bars), bars, rms: r };
+  };
+  const A = enrich(bufA), B = enrich(bufB);
+  console.log('bands A sections:', JSON.stringify(A.sections.map((s) => ({ len: s.lengthBars, rms: s.meanRms, sub: s.sub, e: s.energy }))));
+  console.log('bands B sections:', JSON.stringify(B.sections.map((s) => ({ len: s.lengthBars, rms: s.meanRms, sub: s.sub, e: s.energy }))));
+  check('bands: both buffers give >=2 sections', A.sections.length >= 2 && B.sections.length >= 2,
+    A.sections.length + '/' + B.sections.length);
+  const loudA = A.sections[A.sections.length - 1], loudB = B.sections[B.sections.length - 1];
+  check('bands: loud sections have the same RMS (+-6%)',
+    Math.abs(loudA.meanRms - loudB.meanRms) / Math.max(loudA.meanRms, loudB.meanRms) < 0.06,
+    loudA.meanRms.toFixed(3) + ' vs ' + loudB.meanRms.toFixed(3));
+  check('bands: per-section sub separates them (>2.5x)', loudA.sub > loudB.sub * 2.5,
+    loudA.sub.toFixed(3) + ' vs ' + loudB.sub.toFixed(3));
+  check('bands: subNorm of the sub-heavy loud section ~1', loudA.subNorm > 0.9, '' + loudA.subNorm);
+  const weighted = (s) => 0.55 * s.meanRms + 0.45 * s.sub;
+  check('bands: sub-weighted energy ranks sub-heavy higher at equal RMS',
+    weighted(loudA) > weighted(loudB) * 1.15,
+    weighted(loudA).toFixed(3) + ' vs ' + weighted(loudB).toFixed(3));
+  check('bands: enrich keeps the RMS energy as energyRms',
+    loudA.energyRms === A.rms.sections[A.rms.sections.length - 1].energy,
+    'energyRms=' + loudA.energyRms + ' rmsEnergy=' + A.rms.sections[A.rms.sections.length - 1].energy);
+  check('bands: per-bar arrays are sane length + finite',
+    A.bars.barSub.length >= 30 && A.bars.barSub.every((v) => isFinite(v) && v >= 0),
+    'nBars=' + A.bars.barSub.length);
+  const fbA = HoloBands.frameBands(bufA, 2048);
+  const midFrame = Math.floor(fbA.sub.length * 0.75);
+  check('bands: frame table sub is alive in the loud half', fbA.sub[midFrame] > 0.05, 'sub=' + fbA.sub[midFrame].toFixed(3));
+}
+
+/* ---- BUILD 3: BandTracker kick / beat envelope ---- */
+{
+  const tr = new HoloBands.BandTracker();
+  const dt = 1 / 60, beatDur = 60 / 128;
+  let maxKick = 0, envAtBeat = 0, envOffBeat = 1;
+  // 4 seconds: sub pulses land exactly on each beat (phase ~0)
+  for (let step = 0; step < 240; step++) {
+    const t = step * dt;
+    const phase = (t / beatDur) % 1;
+    const rawSub = phase < 0.12 ? 0.9 : 0.05; // kick transient at the beat
+    const v = tr.update({ sub: rawSub, bass: rawSub * 0.6, mid: 0.1, high: 0.05 }, dt, phase, beatDur, true, 'table');
+    if (v.kick > maxKick) maxKick = v.kick;
+    if (phase < 0.04) envAtBeat = Math.max(envAtBeat, v.beatEnv);
+    if (phase > 0.9) envOffBeat = Math.min(envOffBeat, v.beatEnv);
+  }
+  check('tracker: kick envelope fires on beat-grid sub flux', maxKick > 0.45, 'maxKick=' + maxKick.toFixed(2));
+  check('tracker: beatEnv ~1 on the beat, decayed late in the beat',
+    envAtBeat > 0.9 && envOffBeat < envAtBeat * 0.35, envAtBeat.toFixed(2) + ' -> ' + envOffBeat.toFixed(2));
+  // silence: everything decays toward 0
+  let last = null;
+  for (let step = 0; step < 180; step++) last = tr.update(null, dt, 0.4, beatDur, false, 'idle');
+  check('tracker: bands + kick decay in silence', last.sub < 0.05 && last.kick < 0.05,
+    'sub=' + last.sub + ' kick=' + last.kick);
+  check('tracker: source is recorded', tr.source === 'idle', tr.source);
+}
+
+/* ---- BUILD 3: JOURNEY arc + stage-locked picks ---- */
+{
+  const J = Automator.journeyFor;
+  check('journey: 1 section = [REALITY]', JSON.stringify(J(1)) === '["REALITY"]', JSON.stringify(J(1)));
+  check('journey: 2 sections start + end at REALITY', JSON.stringify(J(2)) === '["REALITY","REALITY"]', JSON.stringify(J(2)));
+  check('journey: 5 sections = the full arc in order',
+    JSON.stringify(J(5)) === '["REALITY","FRACTALITY","ABSTRACTION","VISUALIZATION","REALITY"]', JSON.stringify(J(5)));
+  const j8 = J(8);
+  check('journey: 8 sections start/end REALITY, middles in arc order',
+    j8[0] === 'REALITY' && j8[7] === 'REALITY' &&
+    j8.slice(1, 7).every((s, i, a) => i === 0 || Automator.STAGES.indexOf(s) >= Automator.STAGES.indexOf(a[i - 1])),
+    JSON.stringify(j8));
+  check('journey: 3 sections end at REALITY with a middle stage',
+    J(3)[0] === 'REALITY' && J(3)[2] === 'REALITY' && Automator.STAGES.includes(J(3)[1]), JSON.stringify(J(3)));
+
+  const REAL_LIB = HoloShaders.BUILTIN.map((s) => ({ id: s.id, energy: s.energy, stage: s.stage }));
+  check('library: all 16 looks carry a stage', REAL_LIB.length === 16 && REAL_LIB.every((s) => Automator.STAGES.includes(s.stage)),
+    REAL_LIB.map((s) => s.id + ':' + s.stage).join(' '));
+  const SEC5 = [0, 1, 2, 3, 4].map((i) => ({
+    startBar: i * 16, lengthBars: 16, energy: [0.3, 0.5, 0.9, 0.65, 0.25][i], startSec: i * 30,
+  }));
+  const stageOf = (id) => (REAL_LIB.find((s) => s.id === id) || {}).stage;
+  let journeyOk = true; const picks = [];
+  for (let trial = 0; trial < 24; trial++) {
+    const a = new Automator({ enabled: true, mode: 'journey', onFire: () => {} });
+    a.setTrack(SEC5, 128, 0);
+    a.setLibrary(REAL_LIB);
+    a.setCurrent('nebula', false);
+    for (let idx = 0; idx < 5; idx++) {
+      const id = a.pickFor(idx);
+      picks.push(idx + ':' + id);
+      if (stageOf(id) !== J(5)[idx]) journeyOk = false;
+      a.setCurrent(id, false);
+    }
+  }
+  check('journey picks always come from the section\u2019s stage', journeyOk, picks.slice(0, 8).join(' '));
+  // journey + boundary discipline: continuous replay over 5 sections
+  const fires = [];
+  const a = new Automator({ enabled: true, mode: 'journey', onFire: (id, idx) => fires.push({ id, idx }) });
+  a.setTrack(SEC5, 128, 0);
+  a.setLibrary(REAL_LIB);
+  a.setCurrent('highlands', false);
+  for (let t = 0; t < 149.5; t += 1 / 30) a.update(t, true, t * 1000);
+  check('journey replay: one fire per boundary, stages match the arc',
+    fires.length === 4 && fires.every((f) => stageOf(f.id) === J(5)[f.idx]),
+    JSON.stringify(fires));
 }
 
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nALL UNIT CHECKS PASSED');
